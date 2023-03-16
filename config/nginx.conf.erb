@@ -1,51 +1,147 @@
 daemon off;
-# Heroku dynos have at least 4 cores.
-worker_processes <%= ENV['NGINX_WORKERS'] || 4 %>;
+worker_processes auto;
 
 events {
-	use epoll;
-	accept_mutex on;
-	worker_connections <%= ENV['NGINX_WORKER_CONNECTIONS'] || 1024 %>;
+  use epoll;
+  accept_mutex on;
+  worker_connections 512;
 }
 
 http {
-	gzip on;
-	gzip_comp_level 2;
-	gzip_min_length 512;
-	gzip_proxied any; # Heroku router sends Via header
+  gzip on;
+  gzip_comp_level 6;
+  gzip_min_length 512;
+  gzip_types text/plain text/css application/json application/x-javascript text/xml application/xml application/xml+rss text/javascript;
+  gzip_vary on;
+  gzip_proxied any;
 
-	server_tokens off;
+  server_tokens off;
 
-	log_format l2met 'measure#nginx.service=$request_time request_id=$http_x_request_id';
-	access_log <%= ENV['NGINX_ACCESS_LOG_PATH'] || 'logs/nginx/access.log' %> l2met;
-	error_log <%= ENV['NGINX_ERROR_LOG_PATH'] || 'logs/nginx/error.log' %>;
 
-	include mime.types;
-	default_type application/octet-stream;
-	sendfile on;
+  access_log logs/access.log;
 
-	# Must read the body in 5 seconds.
-	client_body_timeout 5;
 
-	upstream app_server {
-		server unix:/tmp/nginx.socket fail_timeout=0;
-	}
 
-	server {
-		listen <%= ENV["PORT"] %>;
-		server_name _;
-		keepalive_timeout 5;
+  error_log stderr error;
 
-		location / {
-			# Uncomment this if statement to force SSL/redirect http -> https
-			# if ($http_x_forwarded_proto != "https") {
-			#   return 301 https://$host$request_uri;
-			# }
 
-			proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-			proxy_set_header Host $http_host;
-			proxy_redirect off;
-			proxy_pass http://app_server;
-		}
-	}
+  include mime.types;
+  default_type application/octet-stream;
+  sendfile on;
+
+  #Must read the body in 5 seconds.
+  client_body_timeout 5;
+
+  server {
+    listen 55811 reuseport;
+    charset UTF-8;
+    port_in_redirect off;
+    keepalive_timeout 5;
+    root dist/;
+  
+  
+    resolver 10.0.14.160 8.8.8.8;
+  
+
+  
+
+    mruby_post_read_handler /app/bin/config/lib/ngx_mruby/headers.rb cache;
+
+    location / {
+      mruby_set $fallback /app/bin/config/lib/ngx_mruby/routes_fallback.rb cache;
+    
+      try_files $uri $uri/ $fallback;
+    
+    }
+
+  
+
+  
+    if ($http_x_forwarded_proto != "https") {
+      return 301 https://$host$request_uri;
+    }
+  
+
+  
+
+  
+    location ~ ^/\.well\-known/apple\-app\-site\-association$ {
+      set $route /\.well\-known/apple\-app\-site\-association;
+      mruby_set $path /app/bin/config/lib/ngx_mruby/routes_path.rb cache;
+      mruby_set $fallback /app/bin/config/lib/ngx_mruby/routes_fallback.rb cache;
+    
+      try_files $uri $path $fallback;
+    
+    }
+  
+    location ~ ^/.*$ {
+      set $route /.*;
+      mruby_set $path /app/bin/config/lib/ngx_mruby/routes_path.rb cache;
+      mruby_set $fallback /app/bin/config/lib/ngx_mruby/routes_fallback.rb cache;
+    
+      try_files $uri $path $fallback;
+    
+    }
+  
+
+  # need this b/c setting $fallback to =404 will try #{root}=404 instead of returning a 404
+  location @404 {
+    return 404;
+  }
+
+  # fallback proxy named match
+    
+      set $upstream_endpoint_0 http://dev-api-clientlink-us.herokuapp.com;
+      location @/api {
+        rewrite ^/api/?(.*)$ /api/$1 break;
+        # can reuse variable set above
+        proxy_pass $upstream_endpoint_0;
+        proxy_ssl_server_name on;
+
+        
+        proxy_redirect https://dev-api-clientlink-us.herokuapp.com/api/ /api;
+        
+      }
+    
+      set $upstream_endpoint_1 https://sendgrid.net;
+      location @/wf {
+        rewrite ^/wf/?(.*)$ /wf/$1 break;
+        # can reuse variable set above
+        proxy_pass $upstream_endpoint_1;
+        proxy_ssl_server_name on;
+
+        
+        proxy_redirect https://sendgrid.net/wf/ /wf;
+        
+      }
+    
+      set $upstream_endpoint_2 https://sendgrid.net;
+      location @/uni/wf {
+        rewrite ^/uni/wf/?(.*)$ /uni/wf/$1 break;
+        # can reuse variable set above
+        proxy_pass $upstream_endpoint_2;
+        proxy_ssl_server_name on;
+
+        
+        proxy_redirect https://sendgrid.net/uni/wf/ /uni/wf;
+        
+      }
+    
+      set $upstream_endpoint_3 http://dev-api-clientlink-us.herokuapp.com;
+      location @/tracker/wf {
+        rewrite ^/tracker/wf/?(.*)$ /api/sendgrid/fallback/wf/$1 break;
+        # can reuse variable set above
+        proxy_pass $upstream_endpoint_3;
+        proxy_ssl_server_name on;
+
+        
+        proxy_redirect https://dev-api-clientlink-us.herokuapp.com/api/sendgrid/fallback/wf/ /tracker/wf;
+        
+      }
+    
+
+    # fallback redirects named match
+    
+
+  }
 }
